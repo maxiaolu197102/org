@@ -1,0 +1,8 @@
+:PROPERTIES:
+:NOTER_DOCUMENT: cmd.org
+:END:
+#+title: Knowledge
+
+[[id:90d22d82-7525-4b3c-82ea-0dea0b44b91c][常用命令]]
+[[id:d7f05609-5b5d-47a6-b41d-c3118c80fe93][go文档]]
+[[id:2741c751-fb9c-4837-b92a-9b2b35d3309c][iam apiser调试]]
