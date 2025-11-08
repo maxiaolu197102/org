@@ -2,7 +2,7 @@
 :ID:       9dce85a8-db64-4c5b-a507-3d6931b13e6b
 :END:
 #+ti1tle: go文档
-* 入口函数与包初始化：搞清go程序执行顺序 :ATTACH:ATTACH:
+* 入口函数与包初始化：搞清 go 程序执行顺序 :ATTACH:ATTACH:
 <2025-11-02 Sun>
 const (
 	c1 = "c1"
@@ -36,10 +36,10 @@ func variableInit(name string) string {
 
 func contsInitCheck() string {
 	if c1 != "" {
-		fmt.Println("main:c1已经被初始化,c1=", c1)
+		fmt.Println("main:c1 已经被初始化,c1=", c1)
 	}
 	if c2 != "" {
-		fmt.Println("main:c2已经被初始化,c2=", c2)
+		fmt.Println("main:c2 已经被初始化,c2=", c2)
 	}
 	return ""
 }
@@ -78,7 +78,7 @@ init 第二次被调用
 #+end_src
 
 
-**  init函数用途
+**  init 函数用途
 
 
 #+begin_src go
@@ -133,7 +133,7 @@ func init() {
     }
 }
 #+end_src
-=根据环境变量GODEBUG的值，对包级开关变量进行了复杂的初始化，从而保证这些开关变量在http包初始化结束后，可以处理合理状态.
+=根据环境变量 GODEBUG 的值，对包级开关变量进行了复杂的初始化，从而保证这些开关变量在 http 包初始化结束后，可以处理合理状态.
 
 #+begin_src go
 import (
@@ -162,7 +162,7 @@ func init() {
  #+end_src
 
 =注册模式=
-空导入/lib/pq产生一个副作用，会把postgres驱动注册进去.这种在init函数中注册自己的实现方式，有效降低了包对外的直接暴露，尤其是包级变了的暴露。
+空导入/lib/pq 产生一个副作用，会把 postgres 驱动注册进去.这种在 init 函数中注册自己的实现方式，有效降低了包对外的直接暴露，尤其是包级变了的暴露。
 
 
 #+begin_src go
@@ -225,13 +225,13 @@ func init() {
 
 ** 习题
 1. 同一个包内有多个源文件的话，这个包是将所有源文件的常量、变量、init() 函数汇集到一起，然后常量-变量-init() 这样的顺序进行初始化，而不是每个源文件走一遍常量-变量-init() 这样的顺序，是嘛？老师
-   作者回复: 问题很好。实测情况是go会先按文件传入顺序，分别初始化常量与变量，然后在分别调用各个文件中的init函数。比如说如果一个pkg1有两个文件file1.go和file2.go，那么初始化顺序是：file1中的常量 -> file1中的变量 -> file2中常量 -> file2中变量 -> file1中init函数 -> file2中init函数。
+   作者回复: 问题很好。实测情况是 go 会先按文件传入顺序，分别初始化常量与变量，然后在分别调用各个文件中的 init 函数。比如说如果一个 pkg1 有两个文件 file1.go 和 file2.go，那么初始化顺序是：file1 中的常量 -> file1 中的变量 -> file2 中常量 -> file2 中变量 -> file1 中 init 函数 -> file2 中 init 函数。
 2.
     - Go 包的初始化次序：
    1）依赖包按“深度优先”的次序进行初始化；
    2）每个包内按以“常量 -> 变量 -> init 函数”（main.main 函数前）的顺序进行初始化；
    3）包内的多个 init 函数按出现次序进行自动调用。
-   4）如果一个包内有多个文件，则按照file1:常量、变量 file2:常量、变量.fiel1:init file2:init
+   4）如果一个包内有多个文件，则按照 file1:常量、变量 file2:常量、变量.fiel1:init file2:init
     - init 函数常见用途：
    1）重置包级变量值；
    2）实现对包级变量的复杂初始化；
@@ -243,6 +243,181 @@ func init() {
  3.
     =初始化 init 函数先于 main 函数执行，项目中如非必要，禁止隐式的 init 初始化，协作人员多了，各种千奇百怪的问题都可能导致程序执行失败。转而使用显式的初始化，直接在 main 函数中调用对应的初始化方法=
  4.
-   init失败的话，我感觉一般init中要完成的内容好像都偏向资源属性，如果有必然能成功的默认属性则走默认值并警告，如果是必要资源则不成功会影响后续的运行，这时候应该要直接严重错误告警并终止程序吧
+   init 失败的话，我感觉一般 init 中要完成的内容好像都偏向资源属性，如果有必然能成功的默认属性则走默认值并警告，如果是必要资源则不成功会影响后续的运行，这时候应该要直接严重错误告警并终止程序吧
  5.
- 日常实践中，我会将不同类型的初始化操作放在不同init（初始化的“内聚”），同一包内的不同文件的内的初始化，都放在各自文件中，这样代码可读性好一些。
+ 日常实践中，我会将不同类型的初始化操作放在不同 init（初始化的“内聚”），同一包内的不同文件的内的初始化，都放在各自文件中，这样代码可读性好一些。
+
+
+* 构建一个 web 服务就这么简单
+
+** bookstore 结构
+.
+├── cmd
+│   └── bookstore
+│       ├── bookstore
+│       └── main.go
+├── internal
+│   └── store
+│       └── memstore.go
+├── server
+│   ├── middleware
+│   │   └── middleware.go
+│   └── server.go
+└── store
+    ├── factory.go
+    └── types.go
+
+** 习题
+1.
+   - store 提供了图书和接口的模板
+   - factor 用于生产接口实例
+   - memstore 用于具体实现一个接口的实例，实现其方法，并把样例发送到工厂
+   - server 用户把路由和方法对接起来
+
+* 变量声明:静态语言有别于动态语言的重要特征
+
+  1. 包变量声明形式：1.延迟初始化 2.声明聚类 3.就近原则
+  2. 局部变量声明形式: 1.延迟初始化 2.分之控制时使用短变量声明 3.声明聚类
+  3. 变量块声明
+     #+begin_src go
+    var(
+	  a = int(128)
+	  b = int8(20)
+	  c = string("abc")
+	  d = rune('a')
+	  e = true
+     )
+    var(
+	a1,b1,c1 int = 5,6,7
+	c1,d1,e1 = 'c','d','e'
+)
+
+    var ErrShortWrite = errors.New("short write")
+    var ErrShortBuffer = errors.New("short buffer")
+    var EOF = errors.New("EOF")
+
+//go推荐使用默认类型
+  var(
+	a = 13
+	b = int32(17)
+	f = float32(32.2)
+)
+//声明延迟化,虽然没有赋值，但是go让这些变量拥有零值
+   var a int32
+   var f float64
+
+     #+end_src
+ =我们可以将延迟初始化包变量声明放在一个var声明块，然后将显示初始化放在另一个块中，成为变量聚类=
+
+=就近原则=
+ #+begin_src go
+ var ErrNoCookie = errors.New("http: named cookie not present")
+func (r *Request) Cookie(name string) (*Cookie, error) {
+    for _, c := range readCookies(r.Header, name) {
+        return c, nil
+    }
+    return nil, ErrNoCookie
+}
+
+
+ #+end_src
+
+ =对于延迟初始化局部变量，采用通用变量声明模式=
+ #+begin_src go
+  var err error
+ #+end_src
+
+ =对于已经声明且显示初始化的局部变量，采用短声明形式=
+ #+begin_src go
+  a := 17
+  f := 3.14
+  s := "hello,go"
+
+//不接受默认值
+  a := int32(17)
+  f := float32(3.13)
+  s := []byte("hello,gopher")
+ #+end_src
+
+ =分支控制语句使用go短变量=
+ #+begin_src go
+ // $GOROOT/src/strings/strings.go
+func LastIndexAny(s, chars string) int {
+    if chars == "" {
+        // Avoid scanning all of s.
+        return -1
+    }
+    if len(s) > 8 {
+        // 作者注：在if条件控制语句中使用短变量声明形式声明了if代码块中要使用的变量as和isASCII
+        if as, isASCII := makeASCIISet(chars); isASCII {
+            for i := len(s) - 1; i >= 0; i-- {
+                if as.contains(s[i]) {
+                    return i
+                }
+            }
+            return -1
+        }
+    }
+    for i := len(s); i > 0; {
+        // 作者注：在for循环控制语句中使用短变量声明形式声明了for代码块中要使用的变量c
+        r, size := utf8.DecodeLastRuneInString(s[:i])
+        i -= size
+        for _, c := range chars {
+            if r == c {
+                return i
+            }
+        }
+    }
+    return -1
+}
+
+ #+end_src
+
+ =另外，虽然良好的函数 / 方法设计都讲究“单一职责”，所以每个函数 / 方法规模都不大，很少需要应用 var 块来聚类声明局部变量，但是如果你在声明局部变量时遇到了适合聚类的应用场景，你也应该毫不犹豫地使用 var 声明块来声明多于一个的局部变量=
+ #+begin_src go
+// $GOROOT/src/net/dial.go
+func (r *Resolver) resolveAddrList(ctx context.Context, op, network,
+                            addr string, hint Addr) (addrList, error) {
+    ... ...
+    var (
+        tcp      *TCPAddr
+        udp      *UDPAddr
+        ip       *IPAddr
+        wildcard bool
+    )
+   ... ...
+}
+ #+end_src
+=良好的变量声明实践需要我们考虑多方面因素，包括明确要声明的变量是包级变量还是局部变量、是否要延迟初始化、是否接受默认类型、是否是分支控制变量并结合聚类和就近原则等。=
+
+
+* 代码块与作用域:如果保证变量不会被遮蔽
+:PROPERTIES:
+:ID:       baae8b56-ab4d-41f3-9a1d-6744a01ca2e5
+:END:
+
+1. 变量遮蔽
+
+#+begin_src go
+import "fmt"
+
+var a = 10
+
+//包级变量没有参与计算中
+func foo(n int){
+	a := 1
+	a += n
+}
+
+func main(){
+fmt.Println("a = ", a)
+foo(20)
+fmt.Println("a = ",a)
+}
+#+end_src
+
+#+RESULTS:
+: a =  10
+: a =  10
+
+2.宇宙代码块

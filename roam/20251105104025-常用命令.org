@@ -7,91 +7,49 @@
 :CATEGORY: 服务优化
 :END:
 
-* TODO 根据trace分析kafka消费链路，如何提高消费速度
+* TODO 根据 trace 分析 kafka 消费链路，如何提高消费速度
 ** TODO 确定性能瓶颈点
-   - 分析Kafka拉取数据是否慢？（目前64线程并发拉取？速度不应该慢）
+   - 分析 Kafka 拉取数据是否慢？（目前 64 线程并发拉取？速度不应该慢）
    - 检查落库速度是否慢？
-   - 检查ACK确认数据是否慢？
+   - 检查 ACK 确认数据是否慢？
 
-** TODO 目前三个主题(create,update,delete)分区都是64个，把fetchetchloop改为多reader
+** TODO 目前三个主题(create,update,delete)分区都是 64 个，把 fetchetchloop 改为多 reader
 当前的消费链路已经已经已经按照 KafkaKafkaOptions.FetcherCount 启动多 reader：
 在 consumer.go 的 NewUserConsumer 里会根据 FetcherCount 构造 len(c.readers) 个 kafka.Reader，StartConsuming 会为每个 reader 启一个 runFetchLoop 并发拉取消息。
 每条消息携带的 readerIdx 会一路透透传到 worker、batch 聚合器，再由提交协程调用 commitWithRetry 时选回对应 reader 进行 commit，避免多 reader 下的提交错配。
 create/delete/update 这三类操作走的就是同一套 pipeline：正常情况下直接由 worker 处理；当队列阻塞时会进入 runBatchAggregator 做批量写库，仍然保留原始的 readerIdx，所以这几类操作同样受益于多 reader。
 如果想继续加大并发，只需要在配置里把 FetcherCount 调高（或设置环境变量 KAFKA_FETCHER_COUNT），重启实例即可生效。
 
-** DONE 把消费线路上关键点全部进行span埋点
-消费环节：StartConsuming 的分发、runFetchLoop 的每次次取消息尝试、worker 侧 processMessageWithRetry 的多次重试流程。
-批处理阶段：batchCreateToDB、batchDeleteFromDB、batchUpdateToDB 各自的批次大小、成功条数和失败原因。
-数据库操作：单条的 createUserInDB、updateUserInDB、deleteUserFromDB，都会记录执行耗时、重试次数、版本冲突等细节。
-缓存及清理：setUserCache、purgeUserState 等操作新增 span，展示缓存写入、负缓存清理和 session 清理是否成功。
-其他关键步骤例如提交偏移 (commitWithRetry)、pending marker 验证、批量聚合器等也保留原有或新增标签。
-所有新增 span 都带有 topic、partition、offset、reader/worker 编号、批次统计等标签，便于在链路追踪里快速定位瓶颈。
+* 开启数据库慢查询记录及重置相关日志
+1. 开启慢查询日志；如需永久生效，将同样配置写入 my.cnf [mysqld] 段。
+#+begin_src
+SET GLOBAL slow_query_log = ON;
+SET GLOBAL long_query_time = 0.2;
+SET GLOBAL log_output = 'TABLE';
+#+end_src
 
-** TODO 1.1和1.2马上进行代码调整，然后再跑10分钟压测
-   - 根据链路进一步分析
 
-* 消费差异分析
-Prometheus 截图显示 user.create.v1 每秒生产≈241 c/s，但消费≈1 c/s、提交≈1.3 c/s，累计滞后 46；user.update.v1 则消费≈318 c/s、生产≈320 c/s，滞后仅 146。后者与我们之前 64 线程基线相近，说明 Kafka→DB 链路在 update/delete 上仍然健康。
+2. 打开 Performance Schema 等待事件
+#+begin_src
+UPDATE performance_schema.setup_instruments
+   SET ENABLED='YES', TIMED='YES'
+ WHERE NAME IN ('wait/lock/%','wait/synch/%');
+UPDATE performance_schema.setup_consumers
+   SET ENABLED='YES'
+ WHERE NAME IN ('events_waits_current','events_waits_history','events_waits_history_long');
+#+end_src
+验证
+#+begin_src
+SHOW VARIABLES LIKE 'slow_query%';
+SELECT COUNT(*) FROM mysql.slow_log;
+SELECT * FROM performance_schema.events_waits_summary_global_by_event_name WHERE AVG_TIMER_WAIT>0 ORDER BY SUM_TIMER_WAIT DESC LIMIT 20;
+#+end_src
 
-consumer.go 中的创建流程在真正写库前要做 Redis pending marker 校验、可能的 DB 快照兜底，再 insert、写缓存、清 marker（参见 processCreateOperation 及 getPendingCreateMarker）。这些步骤都在单条消息上串行执行，如果 Redis 操作超时或 marker 缺失导致兜底查询，就会把单条处理时间拉长到秒级；Kafka 每分区还是串行提交 offset，所以整体吞吐被拖成 "1 c/s"。
+3. 重置相关日志
+   #+begin_src
+-- 重置相关的事件表
+TRUNCATE TABLE performance_schema.events_statements_summary_by_digest;
+TRUNCATE TABLE performance_schema.events_statements_history_long;
+TRUNCATE TABLE mysql.slow_log;
 
-新增 fetcher/worker 后提升有限，是因为瓶颈在单条消息的 IO（Redis/DB/重试写 Kafka），不是 goroutine 数量。即便 WorkerCount 拉到 64，单条仍需等待 Redis→MySQL→Redis，全局吞吐≈分区数 × 单条耗时的倒数；若单条耗时 700–1000 ms，理论上限就是 1–1.4 c/s，和监控吻合。
-
-Update/Delete 路径没有 pending marker 校验，主要是批量更新/删除逻辑（batchUpdateToDB/batchDeleteFromDB），加上缓存刷新，单条通常几十毫秒，因此能够跟上生产速率，也印证了"每秒小飞鼠≈每秒提交"只代表 DB 提交没有拖慢，而不是说 create 没有瓶颈。
-
-** 定位建议
-用我们刚加的 trace span：重点看 pending_marker_verify、persist_user、clear_pending_marker 的 duration_ms、pending_marker_get_ms、redis_get_ms 等标签，确认延迟落在哪个阶段；也留意 trace 里的 pending_marker_missing、pending_marker_degraded、pending_marker_clear_error，判断是否频繁兜底或清理失败。
-
-同时查看 metrics.ConsumerProcessingErrors 与 ConsumerRetryMessages（operation=create），如果大量报 PENDING_MARKER_ERROR / CHECK_EXISTING_FAILED / CREATE_DB_ERROR，说明我们在写 retry topic；若 retry 阻塞（producer.sendToRetryTopic 返回 enqueue retry topic failed），consumer 会不断重试同一 offset，吞吐进一步被压低。
-
-关注 Redis 客户端指标或日志，确认连接池（默认 500）是否耗尽、是否存在 5 s timeout；必要时在 Redis 侧抓取 QPS/慢查询。
-
-* TODO 可能的优化方向
-
-** TODO 目标：确定 create 链路哪一段最慢，为后续改造提供依据。
-做法：从 log/perf/ 或 trace 输出目录抽取最近压测时间段的 trace JSON/NDJSON（例如 grep batch_create_db、pending_marker_*），统计关键 span（pending_marker_verify、persist_user、clear_pending_marker、process_with_retry）的 p50/p95。
-产出：一份对比表，列出各阶段平均/95线耗时，并附带 sample trace 链接或文件路径。
-
-** TODO 调整 fetch loop 让 create 优先走 batch（优先级 P1）
-目标：减少单条串行开销，让 insert 真正批量化。
-方案草案：在 runFetchLoop 中对 OperationCreate 的消息直接推入 batchCh，仅当 batch channel 接近满时再 fallback 到 jobs；同时可把 batch worker 数与 create 消费比绑定，确保 batch aggregator 能利用最大批次。
-需要代码改动 + gofmt/go test 验证。
-
-** DONE PromQL 告警 for pending_marker（优先级 P2）
-目标：监控 Redis pending marker 相关异常（耗时、失败率、缺失）。
-产出：PromQL 查询 & 告警规则草稿（例如：
-increase(redis_pending_marker_get_seconds_sum[5m]) / increase(redis_pending_marker_get_seconds_count[5m]) > 阈值
-increase(consumer_retry_messages_total{operation="create",error_type="pending_marker_error"}[5m]) > 0
-或 sum(rate(pending_marker_missing_total[5m]))）。
-可配合 Grafana 面板或 Alertmanager 规则。
-
-** 建议先完成 1→2，再落地 3：
-步骤 1 帮我们精准定位瓶颈。
-步骤 2 直接改善吞吐。
-步骤 3 作为长期监控，等改造稳定后再配置即可。
-请确认先按这个顺序推进，我会先拉 trace 并整理统计。
-
-** TODO 需要分析批量链路，编写相应场景并收集trace指标
-用 k6 跑 10 分钟压测，建议包含「基线串行」「高并发 create」「重复校验」「校验失败」四个场景，能覆盖多 reader、批量写入、pending marker 路径。
-环境变量示例：
-export PATH=$HOME/k6/bin:$PATH
-export BASE_URL="http://192.168.10.8:8088"
-export ADMIN_TOKEN="$(cat ~/secrets/iam_admin.token)"   # 或改用 IAM_APISERVER_ADMIN_USER/PASS
-export CREATE_DATASET='{"usernamePrefix":"k6_create","basePassword":"InitPassw0rd!","emailDomain":"perf.local","phonePrefix":"138","phoneSuffixLength":8,"nicknamePool":["PerfOps","PerfQA","PerfSvc"],"extendTemplates":[{"department":"perf","tags":["baseline"]},{"department":"guard","tags":["parallel"]}],"labels":{"origin":"k6","module":"create"},"extras":{"team":"iam-perf"},"isAdminRatio":0.05,"defaultStatus":1,"sleepBaseline":0.05,"sleepParallel":0.02}'
-export BASELINE_DURATION=10m
-export INGEST_DURATION=10m
-export DUPLICATE_DURATION=10m
-export VALIDATION_DURATION=10m
-需要管理员令牌可选 ADMIN_USERNAME/ADMIN_PASSWORD。
-启动命令：
-cd /home/mxl/cdmp-mini/cdmp-mini
-IAM_APISERVER_DISABLE_CLIENT_RATE_LIMITER=true \
-k6 run --summary-export test/iam-apiserver/user/create/output/k6-summary-$(date +%Y%m%d-%H%M%S).json \
-       test/iam-apiserver/user/create/k6/create.js
-       若需要验证 delete/update，也可 parallel 跑 test/iam-apiserver/user/delete_force/k6/*.js 和 update/k6/*.js。
-压测后收集：
-log/perf 下的 trace/raw span，确认 pending_marker_verify、persist_user、batchCreateToDB 的 p95。
-Prometheus 指标：consumer_lag, consumer_batch_size, redis_pending_marker_*。
-Kafka 消费和提交速率，验证多 reader 和批次逻辑是否生效。
-若需要我协助自动化脚本或结果整理，告诉我即可。
+   #+end_src

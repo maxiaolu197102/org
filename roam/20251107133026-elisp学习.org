@@ -1,0 +1,113 @@
+:PROPERTIES:
+:ID:       83c56d86-0de9-4232-a7ce-262106bfd78f
+:END:
+#+title: elisp学习
+
+
+* 列表处理
+#+begin_src emacs-lisp result
+'("a b c e")
+#+end_src
+
+#+RESULTS:
+| a b c e |
+
+#+begin_src emacs-lisp result
+'(go list java)
+#+end_src
+#+RESULTS:
+| go | list | java |
+
+#+begin_src  emacs-lisp result
+(+ 2 2)
+
+#+end_src
+
+#+RESULTS:
+: 4
+
+#+begin_src emacs-lisp
+(+ 2 (+ 3 3))
+
+#+end_src
+
+#+RESULTS:
+: 8
+
+(go list map)
+
+#+begin_src emacs-lisp
+(message "hello,buffer-name:%s" (buffer-name))
+(message "buffer is %d" fill-column)
+#+end_src
+
+#+RESULTS:
+: buffer is 80
+
+ 总结
+** lisp 是由表达式构成的,表达式是单个原子或者列表
+   - 原子
+     数字原子
+     42
+     3.15
+     ;;符号原子
+     (setq hello 10)
+     hello
+     ;;字符串原子
+     "hello,go"
+     ;;布尔原子
+     t
+     nil
+   - list
+     ;;空列表
+     ()
+     ;;包含原子的列表
+     '(1 (2 3) (4 (5 6)))
+  - 表达式求值规则
+    - 数字、字符串为自身
+    - 符号:求值为其绑定值
+    - 关键字:求值为自身
+      (setq x 10)
+      x ;符号求值为绑定值
+      "hello";字符串求值为自身
+      42 ；数字求值为自身
+  - list 的第一个元素被视为函数/操作符，其余元素为参数：
+    （+ 1 2 3)
+     (* 2 (+ 3 4))
+
+  - 代码就是数据
+   '(+ 1 2 3);;数据包括符号+ 1,2,3 的列表
+   (+ 1 2 3):代码:执行加法运算,返回 6
+   (eval '(+ 1 2 3))
+   (quote (a b c));阻止求值 等同'(a b c)
+   (setq x -1)
+   (if (> x 0)
+      "true"
+      "flase"
+   )
+- 原子：构建程序的基本单元
+- 列表：组织代码结构的方式
+- 统一性：代码和数据使用相同的表示法
+- 递归结构：表达式可以无限嵌套
+=这种简单的结构使得 lisp 极其灵活，也是宏系统如此强大的原因——因为操作代码就像操作普通数据一样简单=
+
+** 列表是由 0 个或者多个原子或者内部列表组成，原子或者列表之间用空格分开，并用括号括起来，列表可以为空
+** 对一个函数求值总是返回一个值(除非得到一个错误消息)。另外，他也可以完成一些被称为附带效果的操作。在很多时候，一个函数的主要目的是产生一个附带操作.
+
+* 求值实践
+* 如何编写函数定义
+* 于缓冲区相关的函数
+* 更复杂的函数
+* 变窄和增宽
+* 基本函数:car cdr cons
+* 剪切于存储文本
+* 列表是如何实现的
+* 找回文本
+* 循环和递归
+* 正则表达式查询
+* 计数：重复和正则表达式
+* 统计函数中的单词数
+* 准备柱状图
+* 配置.emacs 文件
+* 调试
+* 结论
